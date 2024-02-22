@@ -10,7 +10,6 @@
 #include "OctreeGraph.h"
 #include "Octree.generated.h"
 
-
 class UProceduralMeshComponent;
 
 UCLASS()
@@ -38,23 +37,20 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Octree|Drawing", meta = (AllowPrivateAccess = "true"))
 	UProceduralMeshComponent* ProceduralMesh = nullptr;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree|Drawing", meta = (AllowPrivateAccess = "true"))
-	bool FillBordersOfOctree;
+	UPROPERTY()
+	UMaterialInstanceDynamic* DynamicMaterialInstance = nullptr;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree|Drawing", meta = (AllowPrivateAccess = "true"))
 	UMaterial* OctreeMaterial = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree|Drawing", meta = (AllowPrivateAccess = "true"))
-	float LineThickness;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree|Drawing", meta = (AllowPrivateAccess = "true", ClampMin = 0, ClampMax = 1))
-	float Opacity;
+	float GridLineThickness = 20.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree|Drawing", meta = (AllowPrivateAccess = "true"))
 	FColor Color;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree|Drawing", meta = (AllowPrivateAccess = "true"))
-	bool ShowGridAfterCalculation;
+	bool GridDrawn = false;
 
 	// Gets the size of the grid along the X axis
 	float GetOctreeSizeX() const { return SingleVolumeSize + ((ExpandVolumeXAxis - 1) * SingleVolumeSize); }
@@ -65,29 +61,35 @@ private:
 	// Gets the size of the grid along the Z axis
 	float GetOctreeSizeZ() const { return SingleVolumeSize + ((ExpandVolumeZAxis - 1) * SingleVolumeSize); }
 
-	void CreateCubeMesh(const FVector& Corner1, const FVector& Corner2, const FVector& Corner3, const FVector& Corner4, const FVector& Corner5,
-	                    const FVector& Corner6, const FVector& Corner7, const FVector& Corner8);
 
-	static void CreateLine(const FVector& Start, const FVector& End, const FVector& Normal, TArray<FVector>& Vertices, TArray<int32>& Triangles,
-	                       const float& LineThickness);
+	FVector Loc;
 	
+	void ResizeOctree();
+	
+	void CalculateBorders();
+	UFUNCTION(CallInEditor)
+	void DrawGrid();
+	UFUNCTION(CallInEditor)
+	void DeleteGrid();
+	void DrawLine(const FVector& Start, const FVector& End, const FVector& Normal, TArray<FVector>& Vertices, TArray<int32>& Triangles) const;
 
-	void ShowGrid();
 
 #pragma endregion
-
-
-	TArray<OctreeNode*> RootNodes;
-	OctreeGraph* NavigationGraph;
+	
+	OctreeNode* RootNode;
+	OctreeGraph NavigationGraph;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree", meta = (AllowPrivateAccess = "true"))
 	TArray<AActor*> ActorToIgnore;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree", meta = (AllowPrivateAccess = "true"))
-	TEnumAsByte<ECollisionChannel> CollisionChannel;
+	TEnumAsByte<ECollisionChannel> CollisionChannel = ECC_WorldStatic;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree", meta = (AllowPrivateAccess = "true"))
-	bool AutoEncapsulateObjects;
+	bool AutoEncapsulateObjects = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree", meta = (AllowPrivateAccess = "true"))
+	bool UseOverlap = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree",
 		meta = (AllowPrivateAccess = "true", ClampMin = 1))
@@ -105,28 +107,46 @@ private:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Octree", meta = (AllowPrivateAccess = "true", ClampMin = 1))
 	int32 ExpandVolumeZAxis = 1;
+	
+	void SetUpOctreesAsync(bool IsLoading);
+	OctreeNode* MakeOctree(const FVector& Origin, const int& Index);
+	void AddObjects(TArray<FBox> FoundObjects, OctreeNode* RootN) const;
+	static void GetEmptyNodes(OctreeNode* Node);
+	static void AdjustDanglingChildNodes(OctreeNode* Node);
 
 
-	void SetUpOctreesAsync();
-	void MakeOctree(const FVector& Origin);
-	void AddObjects(TArray<FOverlapResult> FoundObjects, OctreeNode* RootN) const;
-	void GetEmptyNodes(OctreeNode* Node) const;
-	static void AdjustChildNodes(OctreeNode* Node);
-	void DrawOctreeBorders();
+	UFUNCTION(CallInEditor, Category="Octree")
+	void BakeOctree();
 
 	UFUNCTION(BlueprintCallable, Category="Octree")
-	bool GetAStarPath(const FVector& Start, const FVector& End, FVector& NextLocation, const AActor* Agent) const;
+	bool GetAStarPath(const AActor* Agent, const FVector& End, FVector& OutNextLocation);
 
 	UFUNCTION(BlueprintCallable, Category="Octree")
-	bool GetAStarPathAsync(const FVector& Start, const FVector& End, FVector& NextLocation, const AActor* Agent) const;
+	bool GetAStarPathToTarget(const AActor* Agent, const AActor* End, FVector& NextLocation);
 
+
+	UFUNCTION(BlueprintCallable, Category="Octree")
+	void GetAStarPathAsyncToLocation(const AActor* Agent, const FVector& Target, FVector& OutNextDirection);
+
+	UFUNCTION(BlueprintCallable, Category="Octree")
+	void GetAStarPathAsyncToTarget(const AActor* Agent, const AActor* Target, FVector& OutNextLocation);
+
+	UFUNCTION(BlueprintCallable, Category="Octree")
+	void SetAgentHalfMeshSize(const float& HalfSize) { AgentMeshHalfSize = HalfSize; }
+
+	void SaveNodesToFile(const FString& filename);
+	bool LoadNodesFromFile(const FString& Filename);
+
+	FString SaveFileName;
+	TArray<TArray<FBox>> AllHitResults;
+	
 	std::atomic<bool> IsSetup = false;
 
-	mutable std::unique_ptr<std::thread> PathfindingThread;
-	mutable std::mutex PathfindingMutex;
-	mutable bool IsPathfindingInProgress = false;
+	float AgentMeshHalfSize = 0;
 
-	double TotalFrameTime;
-	double NumFrames;
-	double PreviousFrameTime;
+	FVector PreviousNextLocation = FVector::ZeroVector;
+
+	std::unique_ptr<std::thread> PathfindingThread;
+	std::mutex PathfindingMutex;
+	bool IsPathfindingInProgress = false;
 };

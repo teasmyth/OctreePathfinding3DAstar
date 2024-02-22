@@ -10,51 +10,56 @@
 
 OctreeGraph::OctreeGraph()
 {
-	Nodes.Empty();
+	UE_LOG(LogTemp, Warning, TEXT("new OctreeGraph"));
+	//OctreeNodes = FOctreeNodes();
 }
 
 OctreeGraph::~OctreeGraph()
 {
-	Nodes.Empty();
+	UE_LOG(LogTemp, Warning, TEXT("OctreeGraph destroyed"));
 }
 
-void OctreeGraph::AddNode(OctreeNode* Node)
-{
-	Nodes.Add(Node);
-}
 
-void OctreeGraph::AddRootNode(OctreeNode* Node)
+void OctreeGraph::ConnectNodes(OctreeNode* RootNode)
 {
-	RootNodes.Add(Node);
-}
-
-void OctreeGraph::ConnectNodes()
-{
-	for (const auto Node : Nodes)
+	TArray<OctreeNode*> NodeList;
+	NodeList.Add(RootNode);
+	for (int i = 0; i < NodeList.Num(); i++)
 	{
-		for (auto Direction : Directions)
+		if (NodeList[i]->NavigationNode)
 		{
-			const FVector NeighborLocation = Node->NodeBounds.GetCenter() + Direction * Node->NodeBounds.GetSize().X;
-			OctreeNode* PotentialNeighbor = FindGraphNode(NeighborLocation);
-
-			if (PotentialNeighbor != nullptr  && !Node->Neighbors.Contains(PotentialNeighbor) && Node->NodeBounds.Intersect(PotentialNeighbor->NodeBounds))
+			for (auto Direction : Directions)
 			{
-				Node->Neighbors.Add(PotentialNeighbor);
-				PotentialNeighbor->Neighbors.Add(Node);
+				const FVector NeighborLocation = NodeList[i]->NodeBounds.GetCenter() + Direction * NodeList[i]->NodeBounds.GetSize().X;
+				OctreeNode* PotentialNeighbor = FindGraphNode(NeighborLocation, RootNode);
+
+				if (PotentialNeighbor != nullptr && PotentialNeighbor->NavigationNode && !NodeList[i]->Neighbors.Contains(PotentialNeighbor)
+					&& NodeList[i]->NodeBounds.Intersect(PotentialNeighbor->NodeBounds))
+				{
+					NodeList[i]->Neighbors.Add(PotentialNeighbor);
+					NodeList[i]->NeighborCenters.Add(PotentialNeighbor->NodeBounds.GetCenter());
+					
+					PotentialNeighbor->Neighbors.Add(NodeList[i]);
+					PotentialNeighbor->NeighborCenters.Add(NodeList[i]->NodeBounds.GetCenter());
+				}
 			}
+		}
+
+		for (auto Child : NodeList[i]->ChildrenOctreeNodes)
+		{
+			NodeList.Add(Child);
 		}
 	}
 }
 
+
 //Can do weighted to increase performance * 2. Higher numbers should yield faster path finding but might sacrifice accuracy.
-static float ExtraHWeight = 2.0f; 
+static float ExtraHWeight = 3.0f;
 
-bool OctreeGraph::OctreeAStar(const FVector& StartLocation, const FVector& EndLocation, TArray<FVector>& OutPathList)
+bool OctreeGraph::OctreeAStar(const FVector& StartLocation, const FVector& EndLocation, OctreeNode* RootNode, TArray<FVector>& OutPathList)
 {
-	OctreeNode* Start = FindGraphNode(StartLocation);
-	const OctreeNode* End = FindGraphNode(EndLocation);
-	OutPathList.Empty();
-
+	OctreeNode* Start = FindGraphNode(StartLocation, RootNode);
+	const OctreeNode* End = FindGraphNode(EndLocation, RootNode);
 
 	if (Start == nullptr || End == nullptr)
 	{
@@ -88,6 +93,7 @@ bool OctreeGraph::OctreeAStar(const FVector& StartLocation, const FVector& EndLo
 				Node->H = FLT_MAX;
 				Node->CameFrom = nullptr;
 			}
+
 			return true;
 		}
 
@@ -105,7 +111,7 @@ bool OctreeGraph::OctreeAStar(const FVector& StartLocation, const FVector& EndLo
 			if (Neighbor->G <= TentativeG) continue;
 
 			Neighbor->G = TentativeG;
-			Neighbor->H = ManhattanDistance(Neighbor, End) * ExtraHWeight; // Can do weighted to increase performance * 2 ;
+			Neighbor->H = ManhattanDistance(Neighbor, End) * ExtraHWeight; // Can do weighted to increase performance
 			Neighbor->F = Neighbor->G + Neighbor->H;
 
 			Neighbor->CameFrom = CurrentNode;
@@ -151,8 +157,7 @@ void OctreeGraph::ReconstructPath(const OctreeNode* Start, const OctreeNode* End
 	{
 		return;
 	}
-
-	OutPathList.Empty();
+	
 	OutPathList.Add(End->NodeBounds.GetCenter());
 
 	const OctreeNode* CameFrom = End->CameFrom;
@@ -165,7 +170,7 @@ void OctreeGraph::ReconstructPath(const OctreeNode* Start, const OctreeNode* End
 			const FVector BufferVector = DirectionTowardsSharedFaceFromSmallerNode(Previous, CameFrom);
 			OutPathList.Insert(BufferVector, 0);
 		}
-		
+
 		OutPathList.Insert(CameFrom->NodeBounds.GetCenter(), 0);
 		Previous = CameFrom;
 		CameFrom = CameFrom->CameFrom;
@@ -190,7 +195,7 @@ FVector OctreeGraph::DirectionTowardsSharedFaceFromSmallerNode(const OctreeNode*
 		SmallerCenter = Node2->NodeBounds.GetCenter();
 		LargerCenter = Node1->NodeBounds.GetCenter();
 	}
-	
+
 	// Calculate the difference vector between the centers of the two boxes
 	const FVector Delta = LargerCenter - SmallerCenter;
 
@@ -229,23 +234,13 @@ float OctreeGraph::ManhattanDistance(const OctreeNode* From, const OctreeNode* T
 	return Dx + Dy + Dz;
 }
 
-OctreeNode* OctreeGraph::FindGraphNode(const FVector& Location)
-{
-	OctreeNode* CurrentNode = nullptr;
 
-	//Handy if there are multiple roots
-	for (const auto Root : RootNodes)
-	{
-		if (Root->NodeBounds.IsInside(Location))
-		{
-			CurrentNode = Root;
-			break;
-		}
-	}
+OctreeNode* OctreeGraph::FindGraphNode(const FVector& Location, OctreeNode* RootNode)
+{
+	OctreeNode* CurrentNode = RootNode;
 
 	if (CurrentNode == nullptr)
 	{
-		//Node is not inside any of the roots
 		return nullptr;
 	}
 
@@ -257,6 +252,7 @@ OctreeNode* OctreeGraph::FindGraphNode(const FVector& Location)
 			if (Node->NodeBounds.IsInside(Location))
 			{
 				Closest = Node;
+				break;
 			}
 		}
 		CurrentNode = Closest;
@@ -264,11 +260,41 @@ OctreeNode* OctreeGraph::FindGraphNode(const FVector& Location)
 
 	//Because of the parent-child relationship, sometimes there will be nodes that may have child but also occupied at the same.
 	//Occupied means that it intersects, but it will have children that may not intersect.
-	//They will be filtered out when adding them to Nodes but cannot delete them as it would delete their children who are useful.
-	if (CurrentNode != nullptr && Nodes.Contains(CurrentNode))
+	//They will be filtered out when adding them to NodeBounds but cannot delete them as it would delete their children who are useful.
+	if (CurrentNode != nullptr && CurrentNode->NavigationNode)
 	{
 		return CurrentNode;
 	}
-	
+
 	return nullptr;
+}
+
+void OctreeGraph::ReconstructPointersForNodes(OctreeNode* RootNode)
+{
+	TArray<OctreeNode*> NodeList;
+	NodeList.Add(RootNode);
+
+	for (int i = 0; i < NodeList.Num(); i++)
+	{
+		for (const auto& ChildCenter : NodeList[i]->ChildCenters)
+		{
+			if (OctreeNode* FoundNode = FindGraphNode(ChildCenter, RootNode); FoundNode != nullptr)
+			{
+				NodeList[i]->ChildrenOctreeNodes.Add(FoundNode);
+			}
+		}
+
+		for (const auto& NeighborCenter : NodeList[i]->NeighborCenters)
+		{
+			if (OctreeNode* FoundNode = FindGraphNode(NeighborCenter, RootNode); FoundNode != nullptr)
+			{
+				NodeList[i]->Neighbors.Add(FoundNode);
+			}
+		}
+
+		for (auto Child : NodeList[i]->ChildrenOctreeNodes)
+		{
+			NodeList.Add(Child);
+		}
+	}
 }

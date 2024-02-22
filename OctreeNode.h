@@ -4,6 +4,7 @@
 
 
 #include "CoreMinimal.h"
+#include "Serialization/Archive.h"
 
 
 class CHASING_5SD073_API OctreeNode
@@ -13,19 +14,57 @@ public:
 	OctreeNode();
 	~OctreeNode();
 
+	float F;
+	float G;
+	float H;
+	FBox NodeBounds;
+	
+	OctreeNode* Parent;
 	bool Occupied = false;
-	float F,G,H;
+	bool NavigationNode = false;
 	OctreeNode* CameFrom;
 	TArray<OctreeNode*> Neighbors;
-	//TArray<AActor*> ContainedActors; //This should be the approach if we have moving obstacles.
-
-	
-	OctreeNode* Parent; //For my current needs, it is redundant. Decided to keep it anyway.
-	FBox NodeBounds;
 	TArray<OctreeNode*> ChildrenOctreeNodes;
+
+	TArray<FVector> ChildCenters;
+	TArray<FVector> NeighborCenters;
 	TArray<FBox> ChildrenNodeBounds;
 
-	void DivideNode(const AActor* Actor, const float& MinSize);
+
+	void DivideNode(const FBox& ActorBox, const float& MinSize, const UWorld* World, const bool& DivideUsingBounds = false);
 	void SetupChildrenBounds();
 
+	static bool BoxOverlap(const UWorld* World, const FBox& Box);
 };
+
+inline FArchive& operator <<(FArchive& Ar, OctreeNode*& Node)
+{
+	if (Node == nullptr)
+	{
+		if (Ar.IsLoading())
+		{
+			Node = new OctreeNode();
+		}
+		if (Ar.IsSaving())
+		{
+			return Ar;
+		}
+	}
+
+	Ar << Node->NodeBounds;
+	Ar << Node->ChildCenters;
+	Ar << Node->NeighborCenters;
+	Ar << Node->NavigationNode;
+
+
+	int Size = Node->ChildrenOctreeNodes.Num();
+	Ar << Size;
+	if (Ar.IsLoading())
+	{
+		Node->ChildrenOctreeNodes.SetNum(Size);
+	}
+	Ar << Node->ChildrenOctreeNodes;
+
+
+	return Ar;
+}

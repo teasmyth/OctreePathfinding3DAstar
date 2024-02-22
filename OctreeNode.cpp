@@ -11,29 +11,24 @@ OctreeNode::OctreeNode(const FBox& Bounds, OctreeNode* Parent)
 	this->Parent = Parent;
 	CameFrom = nullptr;
 	Occupied = false;
+	NavigationNode = false;
 	F = FLT_MAX;
 	G = FLT_MAX;
 	H = FLT_MAX;
-
-	//ContainedActors.Empty();
-	ChildrenOctreeNodes.Empty();
-	ChildrenNodeBounds.Empty();
-	Neighbors.Empty();
 }
 
 OctreeNode::OctreeNode()
 {
 	LLM_SCOPE_BYTAG(OctreeNode);
+	NodeBounds = FBox();
 	Parent = nullptr;
 	CameFrom = nullptr;
 	Occupied = false;
+	NavigationNode = false;
 	F = FLT_MAX;
 	G = FLT_MAX;
 	H = FLT_MAX;
-	//ContainedActors.Empty();
-	ChildrenOctreeNodes.Empty();
-	ChildrenNodeBounds.Empty();
-	Neighbors.Empty();
+	
 }
 
 OctreeNode::~OctreeNode()
@@ -48,47 +43,66 @@ OctreeNode::~OctreeNode()
 			delete Child;
 		}
 	}
-	ChildrenOctreeNodes.Empty();
-	ChildrenNodeBounds.Empty();
-	//ContainedActors.Empty();
 }
 
-void OctreeNode::DivideNode(const AActor* Actor, const float& MinSize)
+void OctreeNode::DivideNode(const FBox& ActorBox, const float& MinSize, const UWorld* World, const bool& DivideUsingBounds)
 {
-	const FBox ActorBox = Actor->GetComponentsBoundingBox();
-
 	TArray<OctreeNode*> NodeList;
 	NodeList.Add(this);
 
 	for (int i = 0; i < NodeList.Num(); i++)
-
 	{
-		if (NodeList[i]->Occupied && NodeList[i]->ChildrenOctreeNodes.IsEmpty()) continue;
-		//We only deem a node occupied if it needs no further division.
-
-		const bool Intersects = NodeList[i]->NodeBounds.Intersect(ActorBox);
-		const bool IsInside = ActorBox.IsInside(NodeList[i]->NodeBounds);
-
-		//Alongside checking size, if it doesn't intersect with Actor, or the complete opposite, fully contained within ActorBox, no need to divide
-		if (NodeList[i]->NodeBounds.GetSize().Y <= MinSize || !Intersects || IsInside)
+		if (DivideUsingBounds)
 		{
-			if (Intersects || IsInside)
+			//We only deem a node occupied if it needs no further division.
+			if (NodeList[i]->Occupied && NodeList[i]->ChildrenOctreeNodes.IsEmpty()) continue;
+
+			//Alongside checking size, if it doesn't intersect with Actor, or the complete opposite, fully contained within ActorBox, no need to divide
+			const bool Intersects = NodeList[i]->NodeBounds.Intersect(ActorBox);
+			const bool IsInside = ActorBox.IsInside(NodeList[i]->NodeBounds);
+
+			if (NodeList[i]->NodeBounds.GetSize().Y <= MinSize || !Intersects || IsInside)
 			{
-				NodeList[i]->Occupied = true;
+				if (Intersects || IsInside)
+				{
+					NodeList[i]->Occupied = true;
+				}
+				continue;
 			}
-			continue;
 		}
-		
+		else
+		{
+			if (NodeList[i]->NodeBounds.GetSize().Y <= MinSize)
+			{
+				if (BoxOverlap(World, NodeList[i]->NodeBounds))
+				{
+					NodeList[i]->Occupied = true;
+				}
+				continue;
+			}
+		}
+
 		if (NodeList[i]->ChildrenNodeBounds.IsEmpty())
 		{
 			NodeList[i]->SetupChildrenBounds();
 		}
-
+		
 		for (int j = 0; j < 8; j++)
 		{
-			if (NodeList[i]->ChildrenNodeBounds[j].Intersect(ActorBox))
+			if (DivideUsingBounds)
 			{
-				NodeList.Add(NodeList[i]->ChildrenOctreeNodes[j]);
+				if (NodeList[i]->ChildrenNodeBounds[j].Intersect(ActorBox))
+				{
+					
+					NodeList.Add(NodeList[i]->ChildrenOctreeNodes[j]);
+				}
+			}
+			else
+			{
+				if (BoxOverlap(World, NodeList[i]->ChildrenNodeBounds[j]))
+				{
+					NodeList.Add(NodeList[i]->ChildrenOctreeNodes[j]);
+				}
 			}
 		}
 	}
@@ -112,8 +126,28 @@ void OctreeNode::SetupChildrenBounds()
 
 	ChildrenOctreeNodes.SetNum(8);
 
-	for (int i = 0;i < 8; i++)
+	for (int i = 0; i < 8; i++)
 	{
 		ChildrenOctreeNodes[i] = new OctreeNode(ChildrenNodeBounds[i], this);
 	}
+}
+
+bool OctreeNode::BoxOverlap(const UWorld* World, const FBox& Box)
+{
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldStatic); 
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.bTraceComplex = false;
+
+	TArray<FOverlapResult> OverlapResults;
+	return World->OverlapMultiByObjectType(
+		OverlapResults,
+		Box.GetCenter(), 
+		FQuat::Identity, 
+		ObjectQueryParams,
+		FCollisionShape::MakeBox(Box.GetExtent()), 
+		QueryParams
+	);
 }
